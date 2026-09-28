@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #0f172a;
+  --card: #1e293b;
+}
+
+body {
+  background-color: var(--bg);
+  color: #f1f5f9;
+}
+
+.card {
+  background-color: var(--card);
+  border-radius: 1rem;
+  padding: 1rem;
+}
+
+.troop-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.troop-Infantry {
+  background-color: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+}
+.troop-Lancer {
+  background-color: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+}
+.troop-Marksman {
+  background-color: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+}
+
+/* Form fields: darker than the card with a visible border, so inputs read clearly. */
+.field {
+  background-color: #0b1220;
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.875rem;
+  color: #f1f5f9;
+  outline: none;
+}
+.field:focus {
+  border-color: #3b82f6;
+}
