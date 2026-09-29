@@ -1,6 +1,7 @@
 "use client";
 
 import { GearSlot, GearRarity, UnassignedGearInventory, GEAR_SLOTS } from "@/lib/types";
+import { NumericInput } from "@/components/NumericInput";
 import { GEAR_RARITY_LABELS, GEAR_RARITY_ORDER } from "@/lib/data/gearRarity";
 
 // Common … Mythic, Legendary. Mythic counts double as spare Mythic gear material.
@@ -26,7 +27,7 @@ export function UnassignedGearGrid({
             <tr className="text-slate-400">
               <th className="text-left font-normal pb-2">Slot</th>
               {RARITIES.map((r) => (
-                <th key={r} className="font-normal pb-2 px-1">
+                <th key={r} className="font-normal pb-2 px-0.5">
                   {GEAR_RARITY_LABELS[r].slice(0, 3)}
                 </th>
               ))}
@@ -37,13 +38,13 @@ export function UnassignedGearGrid({
               <tr key={slot}>
                 <td className="py-1 pr-2 text-slate-300">{SLOT_LABELS[slot]}</td>
                 {RARITIES.map((rarity) => (
-                  <td key={rarity} className="py-1 px-1">
-                    <input
-                      type="number"
+                  <td key={rarity} className="py-1 px-0.5">
+                    <NumericInput
                       min={0}
-                      className="field w-12 !px-1 text-center"
+                      aria-label={`${SLOT_LABELS[slot]} ${GEAR_RARITY_LABELS[rarity]} quantity`}
+                      className="field w-10 !px-0.5 text-center"
                       value={value[slot][rarity]}
-                      onChange={(e) => setCell(slot, rarity, Number(e.target.value))}
+                      onCommit={(q) => setCell(slot, rarity, q)}
                     />
                   </td>
                 ))}
