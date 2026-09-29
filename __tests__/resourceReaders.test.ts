@@ -4,6 +4,7 @@
 import { describe, it, expect } from "vitest";
 import path from "path";
 import words from "./fixtures/ocr-words-real-resources.json";
+import cropsFixture from "./fixtures/ocr-crops-components-real.json";
 import { decodeImageFile } from "./helpers/decodeImage";
 import { parseGameNumber, readHeroXpTotal, readEnhancementComponents, enhancementXpFrom } from "../lib/screenshot/resourceReaders";
 import { OcrWord } from "../lib/screenshot/quantityTokens";
@@ -106,13 +107,29 @@ describe("resource parser pipeline on the real screenshots (recorded OCR, real p
     expect(getAvailableHeroExp(inv)).toBe(143_390_000);
   });
 
-  it("Components screenshot → Review suggests 40,526 × 10 and 171 × 100 → 422,360 Enhancement XP", async () => {
-    const res = await replay(words.components, "06_real_test_cases/enhancement_components_backpack.jpg").parse(new Blob(), "enhancement_components");
+  it("Components screenshot → tile by tile → 40,526 × 10 and 171 × 100 → 422,360 Enhancement XP", async () => {
+    // Crop OCR recorded from real Tesseract runs, replayed in call order.
+    const crops = cropsFixture as OcrWord[][];
+    let i = 0;
+    const parser = createResourceInventoryParser(
+      { recognizeWords: async () => { throw new Error("whole-screen OCR must not be used"); } },
+      { loadPixels: async () => img("06_real_test_cases/enhancement_components_backpack.jpg"), readCrop: async () => crops[i++] ?? [] }
+    );
+    const res = await parser.parse(new Blob(), "enhancement_components");
     const byKey = Object.fromEntries(res.data.suggestions.map((s) => [s.fieldKey, s.value]));
     expect(byKey).toEqual({ xp10: 40_526, xp100: 171 });
+    expect(res.data.suggestions.every((s) => s.confidence >= 0.85 && s.sourceBox)).toBe(true);
     const inv = applyConfirmedValues(emptyInventory(), "enhancement_components", byKey);
     expect(getAvailableEnhancementXp(inv)).toBe(422_360);
     expect(res.warnings.join(" ")).toMatch(/top number is the XP per item/);
+  });
+
+  it("older whole-screen reader still works (used when no complete tiles are found)", async () => {
+    const res = await createResourceInventoryParser(
+      { recognizeWords: async () => words.components as OcrWord[] },
+      { loadPixels: async () => img("06_real_test_cases/enhancement_components_backpack.jpg"), componentTiles: false }
+    ).parse(new Blob(), "enhancement_components");
+    expect(Object.fromEntries(res.data.suggestions.map((s) => [s.fieldKey, s.value]))).toEqual({ xp10: 40_526, xp100: 171 });
   });
 });
 
@@ -128,7 +145,7 @@ describe("close-up retry when the full-screen pass misses a quantity", () => {
           return isCloseUp ? [{ text: "171", confidence: 0.6, bbox: { x: 40, y: 20, width: 70, height: 50 } }] : withoutQty;
         },
       },
-      { loadPixels: async () => img("06_real_test_cases/enhancement_components_backpack.jpg"), encodeCrop: async () => new Blob() }
+      { loadPixels: async () => img("06_real_test_cases/enhancement_components_backpack.jpg"), encodeCrop: async () => new Blob(), componentTiles: false }
     );
     const res = await parser.parse(new Blob(), "enhancement_components");
     expect(calls).toEqual(["full", "close-up"]);

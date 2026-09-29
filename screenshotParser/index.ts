@@ -33,6 +33,7 @@ import {
 } from "../lib/screenshot/quantityTokens";
 import { SCREENSHOT_TARGETS, ScreenshotTarget } from "../lib/screenshot/targets";
 import { createHeroGearParser, HeroGearParseOutput } from "./gearParser";
+import { readComponentTiles, ReadCrop } from "../lib/screenshot/componentTiles";
 export { createHeroGearParser, createGearInventoryParser } from "./gearParser";
 
 export interface RosterGridConfig {
@@ -90,6 +91,8 @@ export interface ResourceParseData {
   suggestions: FieldSuggestion[];
   /** Which preprocessing pass produced these tokens (for debugging). */
   pass: "bright-text" | "grayscale";
+  /** Raw per-field OCR (component tiles), kept for the local correction log. */
+  rawReadings?: Record<string, { value: number | null; confidence: number; alternates: number[]; reads: string[] }>;
 }
 
 export interface ResourceInventoryParser {
@@ -133,10 +136,17 @@ export function createResourceInventoryParser(
     loadPixels?: ((image: Blob) => Promise<RGBAImage | undefined>) | null;
     /** Encodes a crop for close-up OCR. Browser default (canvas); tests inject their own. */
     encodeCrop?: (img: RGBAImage) => Promise<Blob>;
+    /** OCR of an already-prepared crop (component tiles). Default: encodeCrop + the OCR engine, no extra preprocessing. */
+    readCrop?: ReadCrop;
+    /** Enhancement Components: read tile by tile (default). false = the older whole-screen reader only. */
+    componentTiles?: boolean;
   } = {}
 ): ResourceInventoryParser {
   const loadPixels = io.loadPixels === undefined ? defaultLoadPixels : io.loadPixels;
   const encodeCrop = io.encodeCrop ?? rgbaToBlob;
+  const readCrop: ReadCrop =
+    io.readCrop ??
+    (async (img, o) => ocrEngine.recognizeWords(await encodeCrop(img), { numericOnly: true, preprocess: "none", whitelist: o.whitelist, singleLine: o.singleLine }));
   return {
     async parse(image, target, opts = {}) {
       const def = SCREENSHOT_TARGETS[target];
@@ -162,6 +172,54 @@ export function createResourceInventoryParser(
           return result(target, tokens, [
             { fieldKey: "total", value: r.value, tokenId: tok?.id ?? null, confidence: r.confidence, reason: `Read from the “Hero XP” row: “${r.rawText}”.` },
           ], "grayscale", ["Read from the “Hero XP” label row. Please double-check before confirming.", ...r.notes], r.confidence);
+        }
+      }
+
+      if (target === "enhancement_components" && pixels && io.componentTiles !== false) {
+        // Tile-first: find each component tile, then read its top (10 / 100) and bottom (quantity) on their own.
+        report(0.05, "Finding component tiles");
+        const t = await readComponentTiles(pixels, async (img, o) => {
+          report(0.5, "Reading each tile up close");
+          return readCrop(img, o);
+        });
+        if (t.tiles.length) {
+          const tokens: QuantityToken[] = [];
+          const suggestions: FieldSuggestion[] = [];
+          const rawReadings: NonNullable<ResourceParseData["rawReadings"]> = {};
+          for (const key of ["xp10", "xp100"] as const) {
+            const denom = key === "xp10" ? 10 : 100;
+            const tile = t.tiles.find((x) => x.denomination === denom);
+            if (!tile) {
+              suggestions.push({ fieldKey: key, value: null, tokenId: null, confidence: 0, reason: `No complete ${denom} XP component tile found — enter it manually.` });
+              continue;
+            }
+            const q = tile.quantity;
+            const id = `tile-${denom}`;
+            if (q.value !== null) tokens.push({ id, rawText: String(q.value), value: q.value, confidence: q.confidence, bbox: tile.quantityBox });
+            // A denomination only inferred from colour lowers trust in the whole tile.
+            const confidence = tile.denominationSource === "colour" ? Math.min(q.confidence, 0.6) : q.confidence;
+            const agree = q.candidates[0]?.votes ?? 0;
+            suggestions.push({
+              fieldKey: key,
+              value: q.value,
+              tokenId: q.value !== null ? id : null,
+              confidence,
+              alternates: q.alternates,
+              sourceBox: tile.tileBox,
+              reason:
+                q.value === null
+                  ? `Found the ${denom} XP tile but couldn't read its quantity — type it in.`
+                  : `${denom} XP tile (top number ${tile.denominationSource === "ocr" ? `“${denom}”` : "unread — judged by colour"}): quantity ${q.value.toLocaleString()}, agreed by ${agree} of ${tile.readings.length} reads.`,
+            });
+            rawReadings[key] = { value: q.value, confidence, alternates: q.alternates, reads: tile.readings.map((r) => `${r.variant}:${r.text}`) };
+          }
+          report(1, "Done");
+          const res = result(target, tokens, suggestions, "bright-text", [
+            "Each tile was read on its own: the top number is the XP per item, the bottom number is how many you own.",
+            ...t.notes,
+          ], Math.min(...suggestions.map((x) => x.confidence)));
+          res.data.rawReadings = rawReadings;
+          return res;
         }
       }
 

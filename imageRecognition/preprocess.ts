@@ -14,7 +14,9 @@ export type PreprocessMode =
   /** Grayscale for dark text on a light panel (never inverted), e.g. the resource list. */
   | "grayscale-dark-text"
   /** Grayscale for light text on a dark background (always inverted). */
-  | "grayscale-light-text";
+  | "grayscale-light-text"
+  /** Already prepared by the caller (e.g. number-crop variants): no change, no upscaling. */
+  | "none";
 
 export interface PixelBuffer {
   data: Uint8ClampedArray; // RGBA
@@ -40,6 +42,7 @@ export function preprocessPixels(
   opts: { brightThreshold?: number; maxSaturation?: number } = {}
 ): PixelBuffer {
   const { data, width, height } = src;
+  if (mode === "none") return { data: new Uint8ClampedArray(data), width, height };
   const out = new Uint8ClampedArray(data.length);
 
   if (mode === "bright-text" || mode === "bright-any") {
@@ -124,7 +127,7 @@ export async function preprocessImage(
   mode: PreprocessMode
 ): Promise<{ canvas: HTMLCanvasElement; scale: number; width: number; height: number }> {
   const bitmap = await createImageBitmap(image);
-  const scale = chooseScale(bitmap.width);
+  const scale = mode === "none" ? 1 : chooseScale(bitmap.width);
   const canvas = document.createElement("canvas");
   canvas.width = bitmap.width * scale;
   canvas.height = bitmap.height * scale;

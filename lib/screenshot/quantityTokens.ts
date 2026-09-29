@@ -38,6 +38,10 @@ export interface FieldSuggestion {
   tokenId: string | null;
   confidence: number; // 0-1; 0 when nothing was suggested
   reason: string;
+  /** Other plausible readings (e.g. 53 when 23 was read), offered as buttons on the review screen. */
+  alternates?: number[];
+  /** Where the value came from on the screenshot (e.g. the whole component tile), shown as a crop. */
+  sourceBox?: BBox;
 }
 
 // Common OCR look-alikes, only applied inside tokens that are already mostly digits.

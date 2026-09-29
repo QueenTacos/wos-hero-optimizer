@@ -11,7 +11,16 @@ scanning for resource counts** (Hero EXP items, Total EXP, Enhancement
 Components) with a mandatory Review/Confirm step. Portrait recognition and
 hero-gear screenshot parsing are still Phase 3 (see "Future Work" below).
 
-> **Screenshot expansion + number input fix (latest):** Every data-entry step
+> **Enhancement Component OCR fix (latest):** component screenshots are read
+> tile by tile (`lib/screenshot/componentTiles.ts`): find each tile, read the
+> TOP (must be exactly 10 or 100) and the BOTTOM quantity separately, with 6
+> preprocessing variants incl. an outline-aware one (`imageRecognition/numberCrops.ts`),
+> consensus voting + digit-shape evidence (`numberConsensus.ts`), confidence and
+> look-alike alternates (5↔2). The review shows the source tile next to each
+> value; uncertain values are never pre-filled. Raw vs confirmed values are
+> logged locally only (`scanLog.ts`, key `wos-hero-optimizer:scan-log`).
+
+> **Screenshot expansion + number input fix:** Every data-entry step
 > has a contextual scan button built on one `<ScanButton scanType=…>` component
 > (`hero-roster`, `hero-gear`, `hero-exp`, `enhancement-components`,
 > `essence-stones`, `mithril`, `mythic-gear`, `extra-gear`), a shared

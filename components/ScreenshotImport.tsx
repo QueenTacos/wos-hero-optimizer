@@ -16,6 +16,8 @@ import { QuantityToken, confidenceLevel } from "@/lib/screenshot/quantityTokens"
 import { ScreenshotParseResult } from "@/lib/types";
 import { confidenceBand } from "@/lib/screenshot/scanTypes";
 import { ScreenshotPicker } from "@/components/ScreenshotPicker";
+import { appendScanLog, LOG_FIELD_NAMES } from "@/lib/screenshot/scanLog";
+import type { BBox } from "@/lib/screenshot/quantityTokens";
 
 type Step = "upload" | "scanning" | "review" | "error";
 
@@ -43,6 +45,8 @@ export function ScreenshotImport({
   const [reasons, setReasons] = useState<Record<string, string>>({});
   /** Low-confidence detections: shown as "Detected: X · Use X", never pre-filled. */
   const [held, setHeld] = useState<Record<string, { value: number; tokenId: string | null; confidence: number }>>({});
+  /** Per field: other plausible readings and the tile the value came from. */
+  const [extras, setExtras] = useState<Record<string, { alternates: number[]; sourceBox?: BBox; raw: number | null; rawConfidence: number }>>({});
   const [step, setStep] = useState<Step>("upload");
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageSize, setImageSize] = useState<{ w: number; h: number } | null>(null);
@@ -102,6 +106,11 @@ export function ScreenshotImport({
         };
       }
       setHeld(hold);
+      setExtras(
+        Object.fromEntries(
+          res.data.suggestions.map((s) => [s.fieldKey, { alternates: s.alternates ?? [], sourceBox: s.sourceBox, raw: s.value, rawConfidence: s.confidence }])
+        )
+      );
       setFields(initial);
       setActiveField(def.fields[0].key);
       setStep("review");
@@ -140,7 +149,26 @@ export function ScreenshotImport({
       const raw = fields[f.key]?.value ?? "";
       values[f.key] = raw === "" ? null : Number(raw);
     }
+    // Local-only log of what OCR read vs. what was confirmed (no screenshots).
+    appendScanLog(
+      def.fields
+        .filter((f) => extras[f.key])
+        .map((f) => ({
+          at: new Date().toISOString(),
+          scanType: target,
+          field: LOG_FIELD_NAMES[f.key] ?? f.key,
+          rawValue: extras[f.key].raw,
+          correctedValue: values[f.key],
+          confidence: extras[f.key].rawConfidence,
+          alternates: extras[f.key].alternates,
+          reads: result?.data.rawReadings?.[f.key]?.reads,
+        }))
+    );
     onConfirm(values, target);
+  }
+
+  function choose(key: string, value: number) {
+    setFields((prev) => ({ ...prev, [key]: { value: String(value), tokenId: prev[key]?.tokenId ?? null, confidence: 1, userVerified: true } }));
   }
 
   const assignedTokenIds = new Set(Object.values(fields).map((f) => f.tokenId).filter(Boolean) as string[]);
@@ -256,33 +284,27 @@ export function ScreenshotImport({
                       <label htmlFor={`scan-${f.key}`} className="text-sm">{f.label}</label>
                       <ConfidenceBadge state={st} />
                     </div>
-                    <input
-                      id={`scan-${f.key}`}
-                      inputMode="numeric"
-                      className="mt-1 w-full bg-slate-900 border border-slate-700 focus:border-blue-500 outline-none rounded px-2 py-2 text-sm text-slate-100"
-                      placeholder="Not found — type it in"
-                      value={st?.value ?? ""}
-                      onFocus={() => setActiveField(f.key)}
-                      onChange={(e) => editField(f.key, e.target.value)}
+                    <div className="flex items-center gap-2">
+                      {extras[f.key]?.sourceBox && imageUrl && imageSize && (
+                        <SourceCrop src={imageUrl} size={imageSize} box={extras[f.key].sourceBox!} label={`${f.label} tile from your screenshot`} />
+                      )}
+                      <input
+                        id={`scan-${f.key}`}
+                        inputMode="numeric"
+                        className="mt-1 w-full bg-slate-900 border border-slate-700 focus:border-blue-500 outline-none rounded px-2 py-2 text-sm text-slate-100"
+                        placeholder="Not found — type it in"
+                        value={st?.value ?? ""}
+                        onFocus={() => setActiveField(f.key)}
+                        onChange={(e) => editField(f.key, e.target.value)}
+                      />
+                    </div>
+                    <ValueChoices
+                      current={st?.value ?? ""}
+                      detected={held[f.key]?.value ?? extras[f.key]?.raw ?? null}
+                      confidence={extras[f.key]?.rawConfidence ?? 0}
+                      alternates={extras[f.key]?.alternates ?? []}
+                      onChoose={(v) => choose(f.key, v)}
                     />
-                    {held[f.key] && (st?.value ?? "") === "" && (
-                      <div className="mt-1.5 flex items-center justify-between gap-2 rounded bg-red-500/10 border border-red-900/60 px-2 py-1.5">
-                        <span className="text-[11px] text-red-200">
-                          Low confidence: detected {held[f.key].value.toLocaleString()} ({Math.round(held[f.key].confidence * 100)}%)
-                        </span>
-                        <button
-                          type="button"
-                          className="text-xs px-2 py-1 rounded bg-slate-800 border border-slate-600"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const h = held[f.key];
-                            setFields((prev) => ({ ...prev, [f.key]: { value: String(h.value), tokenId: h.tokenId, confidence: h.confidence, userVerified: true } }));
-                          }}
-                        >
-                          Use {held[f.key].value.toLocaleString()}
-                        </button>
-                      </div>
-                    )}
                     {st && !st.userVerified && reasons[f.key] ? (
                       <div className="text-[11px] text-slate-500 mt-1">{reasons[f.key]}</div>
                     ) : st?.tokenId && tokensById.get(st.tokenId) ? (
@@ -342,12 +364,17 @@ export function ScreenshotImport({
 }
 
 function ConfidenceBadge({ state }: { state?: FieldState }) {
-  if (!state || state.value === "") return <span className="text-[11px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-300">Missing</span>;
+  if (!state || state.value === "")
+    return <span className="text-[11px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-300">{state && state.confidence === 0 ? "Uncertain — select value" : "Missing"}</span>;
   if (state.userVerified) return <span className="text-[11px] px-2 py-0.5 rounded-full bg-green-500/20 text-green-300">Set by you</span>;
   const lvl = confidenceLevel(state.confidence);
   const cls =
     lvl === "high" ? "bg-green-500/20 text-green-300" : lvl === "medium" ? "bg-amber-500/20 text-amber-300" : "bg-red-500/20 text-red-300";
-  return <span className={`text-[11px] px-2 py-0.5 rounded-full ${cls}`}>{lvl === "high" ? "Read — please check" : "Guess — please check"}</span>;
+  return (
+    <span className={`text-[11px] px-2 py-0.5 rounded-full ${cls}`} title={`${Math.round(state.confidence * 100)}% sure`}>
+      {lvl === "high" ? "Detected" : lvl === "medium" ? `Please verify · ${Math.round(state.confidence * 100)}%` : "Uncertain — select value"}
+    </span>
+  );
 }
 
 /** Live totals from the values currently in the form, so the user sees exactly what will be used. */
@@ -412,4 +439,67 @@ function ApplyNote({ target }: { target: ScreenshotTarget }) {
     mithril: "Confirming replaces your Mithril amount.",
   };
   return <p className="text-xs text-slate-400 px-1">{text[target]}</p>;
+}
+
+/**
+ * Other plausible readings as buttons. Low confidence (field left empty):
+ * "Uncertain — select value: [53] [23]". Otherwise: "Other possible readings".
+ */
+function ValueChoices({
+  current,
+  detected,
+  confidence,
+  alternates,
+  onChoose,
+}: {
+  current: string;
+  detected: number | null;
+  confidence: number;
+  alternates: number[];
+  onChoose: (v: number) => void;
+}) {
+  const empty = current === "";
+  const options = [...new Set([...(empty && detected !== null ? [detected] : []), ...alternates])].filter((v) => String(v) !== current);
+  if (!options.length) return null;
+  return (
+    <div className={`mt-1.5 flex flex-wrap items-center gap-1.5 rounded px-2 py-1.5 ${empty ? "bg-red-500/10 border border-red-900/60" : "bg-slate-900/60 border border-slate-800"}`}>
+      <span className={`text-[11px] ${empty ? "text-red-200" : "text-slate-400"}`}>
+        {empty ? `Uncertain${detected !== null ? ` (${Math.round(confidence * 100)}%)` : ""} — select value:` : "Other possible readings:"}
+      </span>
+      {options.map((v) => (
+        <button
+          key={v}
+          type="button"
+          className="text-xs px-2.5 py-1 rounded bg-slate-800 border border-slate-600 tabular-nums"
+          onClick={(e) => {
+            e.stopPropagation();
+            onChoose(v);
+          }}
+          aria-label={`Use ${v}`}
+        >
+          {v.toLocaleString()}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** The part of the screenshot a value was read from (e.g. one component tile), shown next to the field. */
+function SourceCrop({ src, size, box, label }: { src: string; size: { w: number; h: number }; box: BBox; label: string }) {
+  const W = 96;
+  const k = W / box.width;
+  return (
+    <div
+      role="img"
+      aria-label={label}
+      className="mt-1 rounded-md border border-slate-700 shrink-0"
+      style={{
+        width: W,
+        height: Math.round(box.height * k),
+        backgroundImage: `url(${src})`,
+        backgroundSize: `${size.w * k}px ${size.h * k}px`,
+        backgroundPosition: `${-box.x * k}px ${-box.y * k}px`,
+      }}
+    />
+  );
 }

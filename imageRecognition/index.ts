@@ -16,7 +16,7 @@ export interface RecognizeWordsOptions {
   /** Restrict recognition to digits, separators, K/M and "x". */
   numericOnly?: boolean;
   /** Image cleanup applied before OCR (default "bright-text"). */
-  preprocess?: "bright-text" | "bright-any" | "grayscale" | "grayscale-dark-text" | "grayscale-light-text";
+  preprocess?: "bright-text" | "bright-any" | "grayscale" | "grayscale-dark-text" | "grayscale-light-text" | "none";
   /** Override the default numeric whitelist (e.g. "Lv.0123456789"). */
   whitelist?: string;
   /** Treat the image as a single line of text (e.g. one "Lv. 12" label). */
