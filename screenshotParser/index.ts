@@ -11,14 +11,17 @@
 //   HeroRosterParser — finds hero cards, identifies each hero by PORTRAIT
 //     MATCHING against the local portrait library (not OCR), OCRs the level,
 //     reads stars from the star icons. Prototype; see rosterParser.ts.
-// Not yet: HeroGearScreenshotParser (automatic gear detection).
+//   HeroGearScreenshotParser — Hero Gear screen: slot tiles by colour/position,
+//     "+N" enhancement and "Lv.N" mastery by OCR, hero by name (gearParser.ts).
+//   GearInventoryParser — rarity tiles + quantities; slot chosen by the user.
+//   Essence Stones / Mithril — label-anchored quantity (resourceReaders.ts).
 // ============================================================================
 
 import { DetectedScreenshotHero, ScreenshotParseResult } from "../lib/types";
 import { HeroPortraitMatcher, OcrEngine, IconMatcher } from "../imageRecognition";
 import type { HeroRecognizer } from "../imageRecognition/heroRecognizer";
 import { crop, loadRGBAImage, rgbaToBlob, RGBAImage } from "../imageRecognition/pixels";
-import { completeComponentReading, readEnhancementComponents, readHeroXpTotal } from "../lib/screenshot/resourceReaders";
+import { ESSENCE_STONE_LABEL, MITHRIL_LABEL, completeComponentReading, readEnhancementComponents, readHeroXpTotal, readLabeledQuantity } from "../lib/screenshot/resourceReaders";
 import type { OcrWord } from "../lib/screenshot/quantityTokens";
 import { levelFromOcrText, parseRosterImage, RosterParseOptions } from "./rosterParser";
 import {
@@ -29,6 +32,8 @@ import {
   suggestFieldValues,
 } from "../lib/screenshot/quantityTokens";
 import { SCREENSHOT_TARGETS, ScreenshotTarget } from "../lib/screenshot/targets";
+import { createHeroGearParser, HeroGearParseOutput } from "./gearParser";
+export { createHeroGearParser, createGearInventoryParser } from "./gearParser";
 
 export interface RosterGridConfig {
   columns: number;
@@ -96,7 +101,7 @@ export interface ResourceInventoryParser {
 }
 
 export interface HeroGearScreenshotParser {
-  parse(image: Blob): Promise<ScreenshotParseResult<Record<string, unknown>>>;
+  parse(image: Blob, opts?: { expectedHeroId?: string; onProgress?: (p: number, stage: string) => void }): Promise<HeroGearParseOutput>;
 }
 
 export interface ScreenshotParserDeps {
@@ -111,6 +116,8 @@ const SCREENSHOT_TYPE: Record<ScreenshotTarget, ScreenshotParseResult<unknown>["
   hero_exp_items: "hero_exp_inventory",
   hero_exp_total: "hero_exp_inventory",
   enhancement_components: "enhancement_components",
+  essence_stones: "resource_inventory",
+  mithril: "resource_inventory",
 };
 
 /**
@@ -195,6 +202,32 @@ export function createResourceInventoryParser(
         }
       }
 
+      if (target === "essence_stones" || target === "mithril") {
+        const spec = target === "mithril" ? MITHRIL_LABEL : ESSENCE_STONE_LABEL;
+        report(0, `Looking for “${spec.name}”`);
+        let words = await ocrEngine.recognizeWords(image, { numericOnly: false, preprocess: "grayscale", onProgress: (p) => report(p * 0.5, "Reading text") });
+        let r = readLabeledQuantity(words, spec);
+        if (!r.labelFound) {
+          // Game popups use light text on dark panels; list rows use dark text on light rows.
+          const alt = await ocrEngine.recognizeWords(image, { numericOnly: false, preprocess: "bright-any", onProgress: (p) => report(0.5 + p * 0.5, "Trying again with a different filter") });
+          const r2 = readLabeledQuantity(alt, spec);
+          if (r2.labelFound) { words = alt; r = r2; }
+        }
+        const tokens = extractQuantityTokens(words);
+        const tok = r.valueBox ? tokens.find((t) => t.bbox.x === r.valueBox!.x && t.bbox.y === r.valueBox!.y) : undefined;
+        report(1, "Done");
+        return result(target, tokens, [
+          r.value !== null
+            ? { fieldKey: "qty", value: r.value, tokenId: tok?.id ?? null, confidence: r.confidence, reason: `Read next to “${spec.name}”: “${r.rawText}”.` }
+            : { fieldKey: "qty", value: null, tokenId: null, confidence: 0, reason: r.notes[0] ?? "Not found — tap the number on the screenshot or type it." },
+        ], "grayscale", [
+          r.labelFound
+            ? `Read from the “${spec.name}” label. The item icon isn't checked yet, so please double-check.`
+            : `No “${spec.name}” label found, so nothing was filled in. Tap the ${spec.name} amount on the screenshot, or type it.`,
+          ...r.notes.slice(r.value === null ? 1 : 0),
+        ], r.confidence);
+      }
+
       // ---- 2. Fallback: numbers in screen reading order (weak guess) ----
       report(0, "Reading numbers");
       const brightWords =
@@ -269,8 +302,7 @@ function passScore(tokens: QuantityToken[], expected: number): number {
 }
 
 /**
- * Factory for all parsers. Resource + roster parsers are live (Phase 2); the
- * gear parser still throws until automatic gear detection exists.
+ * Factory for all parsers. All results still go through a review screen.
  */
 export function createScreenshotParsers(deps: ScreenshotParserDeps): {
   heroRosterParser: HeroRosterParser;
@@ -285,6 +317,6 @@ export function createScreenshotParsers(deps: ScreenshotParserDeps): {
       ? createHeroRosterParser(deps.heroRecognizer, deps.ocrEngine)
       : { parse: notYet("Hero roster (no HeroRecognizer supplied)") },
     resourceInventoryParser: createResourceInventoryParser(deps.ocrEngine),
-    heroGearParser: { parse: notYet("Hero gear") },
+    heroGearParser: createHeroGearParser(deps.ocrEngine),
   };
 }
