@@ -1,4 +1,4 @@
-import { Inventory, HeroExpInventory, HeroGearInventory } from "../types";
+import { Inventory, HeroExpInventory, HeroGearInventory, GearSlot } from "../types";
 
 // ----------------------------------------------------------------------------
 // Hero EXP — text parser for Mode A ("Total EXP")
@@ -71,6 +71,16 @@ export function getAvailableEnhancementXp(inventory: Pick<Inventory, "enhancemen
 /** Spare Mythic Hero Gear = unassigned Mythic pieces across all slots (usable as ascension / threshold material). */
 export function spareMythicGearCount(unassigned: Inventory["unassignedGear"]): number {
   return (Object.values(unassigned) as Record<string, number>[]).reduce((s, bySlot) => s + (bySlot.mythic ?? 0), 0);
+}
+
+/** Spare Mythic Gear per slot (the Mythic column of the Extra / Unassigned grid). */
+export function spareMythicGearBySlot(unassigned: Inventory["unassignedGear"]): Record<GearSlot, number> {
+  return {
+    goggles: unassigned.goggles.mythic ?? 0,
+    gloves: unassigned.gloves.mythic ?? 0,
+    belt: unassigned.belt.mythic ?? 0,
+    boots: unassigned.boots.mythic ?? 0,
+  };
 }
 
 /** The separate Hero Gear resource pools (spec §12). */

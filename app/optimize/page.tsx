@@ -1,18 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { HeroCard, RosterRow } from "@/components/HeroCard";
 import { emptyRowGear } from "@/components/GearEditor";
 import { HeroPortrait } from "@/components/HeroPortrait";
+import { NumericInput } from "@/components/NumericInput";
 import { HeroPickerSheet } from "@/components/HeroSelect";
 import { OptimizationResults } from "@/components/OptimizationResults";
 import { UnassignedGearGrid } from "@/components/UnassignedGearGrid";
-import { ScreenshotImport } from "@/components/ScreenshotImport";
-import { RosterScanReview } from "@/components/RosterScanReview";
+import { ScanButton, ScanDetected } from "@/components/ScanButton";
 import { ConfirmedRosterEntry, mergeRosterEntries } from "@/lib/screenshot/rosterMerge";
-import { applyConfirmedValues, ScreenshotTarget } from "@/lib/screenshot/targets";
+import { applyConfirmedValues } from "@/lib/screenshot/targets";
+import { mergeGearScans, RowGearLike } from "@/lib/screenshot/gearScanApply";
 import { getHeroDefinition } from "@/lib/data/heroDatabase";
-import { getAvailableHeroExp, getAvailableEnhancementXp, parseExpInput, spareMythicGearCount } from "@/lib/utils/inventory";
+import { getAvailableHeroExp, getAvailableEnhancementXp, parseExpInput, spareMythicGearBySlot, spareMythicGearCount } from "@/lib/utils/inventory";
 import { loadSavedState, saveState, SavedStateV2 } from "@/lib/storage/savedState";
 import { runOptimization } from "@/lib/optimizer/runOptimization";
 import { Hero, Inventory, LevelingMode, EnhancementMode, GEAR_SLOTS, emptyHeroGear, emptyInventory } from "@/lib/types";
@@ -72,8 +73,6 @@ export default function OptimizePage() {
   const [savedAt, setSavedAt] = useState<string | undefined>(undefined);
   /** true while the next state change comes from loading a save (not an edit) — don't re-stamp it. */
   const loadingSave = useRef(true);
-  const [scanTarget, setScanTarget] = useState<ScreenshotTarget | null>(null);
-  const [rosterScanOpen, setRosterScanOpen] = useState(false);
   const [rosterNotice, setRosterNotice] = useState<string | null>(null);
 
   const heroes = useMemo(() => rowsToHeroes(rows), [rows]);
@@ -132,7 +131,6 @@ export default function OptimizePage() {
   function applyRosterScan(entries: ConfirmedRosterEntry[]) {
     const res = mergeRosterEntries(rows, entries, newRow);
     setRows(res.rows);
-    setRosterScanOpen(false);
     setShowResults(false);
     const parts = [
       res.added && `${res.added} added`,
@@ -148,12 +146,36 @@ export default function OptimizePage() {
     );
     setShowResults(false);
   }
-  function applyScan(target: ScreenshotTarget, values: Record<string, number | null>) {
-    setInventory((prev) => applyConfirmedValues(prev, target, values));
-    if (target === "hero_exp_total" && values.total != null) setExpTotalDraft(String(values.total));
-    setScanTarget(null);
+  /** Every scanner lands here, only after its review step was confirmed. */
+  function applyDetected(d: ScanDetected) {
     setShowResults(false);
+    switch (d.type) {
+      case "hero-roster":
+        return applyRosterScan(d.entries);
+      case "hero-gear": {
+        const res = mergeGearScans(rows, d.scans, newRow);
+        setRows(res.rows);
+        setRosterNotice(
+          `Gear scan: ${res.slotsWritten} slot${res.slotsWritten === 1 ? "" : "s"} updated` +
+            (res.heroesAdded ? `, ${res.heroesAdded} hero${res.heroesAdded > 1 ? "es" : ""} added (set their level and stars)` : "") +
+            "."
+        );
+        return;
+      }
+      case "resource":
+        setInventory((prev) => applyConfirmedValues(prev, d.target, d.values));
+        if (d.target === "hero_exp_total" && d.values.total != null) setExpTotalDraft(String(d.values.total));
+        return;
+      case "gear-inventory":
+        setInventory((prev) => ({ ...prev, unassignedGear: d.unassignedGear }));
+        return;
+    }
   }
+  const gearByHero = useMemo(() => {
+    const m: Record<string, RowGearLike> = {};
+    for (const r of rows) if (r.heroDefId) m[r.heroDefId] = r.gear;
+    return m;
+  }, [rows]);
 
   function addHero(heroDefId: string) {
     setRows((prev) => [...prev, newRow(heroDefId)]);
@@ -169,7 +191,10 @@ export default function OptimizePage() {
   return (
     <div className="flex flex-col gap-6">
       <section>
-        <SectionHeader title="1. Your Heroes" onScan={() => setRosterScanOpen(true)} label="Scan roster" />
+        <SectionHeader title="1. Your Heroes">
+          <ScanButton scanType="hero-roster" onDetected={applyDetected} />
+          <ScanButton scanType="hero-gear" onDetected={applyDetected} existingGear={gearByHero} />
+        </SectionHeader>
         {rosterNotice && (
           <div className="card !py-2 mb-3 text-xs text-green-200 border border-green-900 flex justify-between gap-2">
             <span>{rosterNotice}</span>
@@ -189,6 +214,11 @@ export default function OptimizePage() {
               takenIds={takenDefIds.filter((id) => id !== row.heroDefId)}
               onChange={updateRow}
               onRemove={removeRow}
+              gearScan={
+                row.heroDefId ? (
+                  <ScanButton scanType="hero-gear" size="sm" heroId={row.heroDefId} existingGear={gearByHero} onDetected={applyDetected} />
+                ) : undefined
+              }
             />
           ))}
           <button onClick={() => setPickerOpen(true)} className="text-sm text-blue-400 border border-blue-900 rounded-lg py-2">
@@ -198,10 +228,13 @@ export default function OptimizePage() {
       </section>
 
       <section>
-        <SectionHeader
-          title="2. Hero EXP"
-          onScan={() => setScanTarget(inventory.heroExp.mode === "items" && getAvailableHeroExp(inventory) > 0 ? "hero_exp_items" : "hero_exp_total")}
-        />
+        <SectionHeader title="2. Hero EXP">
+          <ScanButton
+            scanType="hero-exp"
+            heroExpMode={inventory.heroExp.mode === "items" && getAvailableHeroExp(inventory) > 0 ? "items" : "total"}
+            onDetected={applyDetected}
+          />
+        </SectionHeader>
         <div className="card flex gap-2 mb-2">
           <button
             className={`flex-1 py-2 rounded-lg text-sm ${inventory.heroExp.mode === "total" ? "bg-blue-600" : "bg-slate-800"}`}
@@ -261,7 +294,9 @@ export default function OptimizePage() {
       </section>
 
       <section>
-        <SectionHeader title="3. Hero Gear Enhancement" onScan={() => setScanTarget("enhancement_components")} />
+        <SectionHeader title="3. Hero Gear Enhancement">
+          <ScanButton scanType="enhancement-components" onDetected={applyDetected} />
+        </SectionHeader>
         <div className="card grid grid-cols-2 gap-3">
           <InventoryField
             label="10 XP components"
@@ -286,7 +321,9 @@ export default function OptimizePage() {
       </section>
 
       <section>
-        <h2 className="font-semibold mb-2">4. Extra / Unassigned Hero Gear</h2>
+        <SectionHeader title="4. Extra / Unassigned Hero Gear">
+          <ScanButton scanType="extra-gear" unassignedGear={inventory.unassignedGear} onDetected={applyDetected} />
+        </SectionHeader>
         <p className="text-xs text-slate-400 mb-2">
           Gear you own but haven't equipped yet. Kept separate from gear already on a hero card above — nothing is
           double-counted.
@@ -304,33 +341,46 @@ export default function OptimizePage() {
             label="Essence Stones"
             value={inventory.essenceStones}
             onChange={(v) => setInventory((p) => ({ ...p, essenceStones: v }))}
+            action={<ScanButton scanType="essence-stones" size="sm" onDetected={applyDetected} />}
           />
           <InventoryField
             label="Mithril"
             value={inventory.mithril}
             onChange={(v) => setInventory((p) => ({ ...p, mithril: v }))}
+            action={<ScanButton scanType="mithril" size="sm" onDetected={applyDetected} />}
           />
+          <div className="col-span-2 flex flex-col gap-1 text-xs text-slate-400">
+            <div className="flex items-center justify-between gap-2">
+              <span>Spare Mythic Gear: {spareMythicGearCount(inventory.unassignedGear)}</span>
+              <ScanButton scanType="mythic-gear" size="sm" unassignedGear={inventory.unassignedGear} onDetected={applyDetected} />
+            </div>
+            <span className="text-[11px]">
+              {(() => {
+                const b = spareMythicGearBySlot(inventory.unassignedGear);
+                return `Goggles ${b.goggles} · Gloves ${b.gloves} · Belt ${b.belt} · Boots ${b.boots} — the Mythic column of Extra Gear above. Edit it there.`;
+              })()}
+            </span>
+          </div>
         </div>
         <p className="text-xs text-slate-400 mt-1">
-          Essence Stones → Mastery Forging. Mithril → Legendary thresholds. Spare Mythic gear (from the unassigned
-          gear above, after re-equipping): {spareMythicGearCount(inventory.unassignedGear)} — used for ascension, Legendary
-          thresholds and Mastery 11+. None of these are Enhancement XP.
+          Essence Stones → Mastery Forging. Mithril → Legendary thresholds. Spare Mythic gear (counted after re-equipping)
+          → ascension, Legendary thresholds and Mastery 11+. None of these are Enhancement XP.
         </p>
       </section>
 
       <section>
         <h2 className="font-semibold mb-2">6. Strategy</h2>
         <div className="card flex flex-col gap-3 text-sm">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
             <span>Hero EXP mode</span>
-            <select className="field" value={levelingMode} onChange={(e) => setLevelingMode(e.target.value as LevelingMode)}>
+            <select className="field max-w-full" value={levelingMode} onChange={(e) => setLevelingMode(e.target.value as LevelingMode)}>
               <option value="balanced">Balanced Top 5</option>
               <option value="priority">Priority (Hero #1 first)</option>
             </select>
           </div>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
             <span>Gear Enhancement mode</span>
-            <select className="field" value={enhancementMode} onChange={(e) => setEnhancementMode(e.target.value as EnhancementMode)}>
+            <select className="field max-w-full" value={enhancementMode} onChange={(e) => setEnhancementMode(e.target.value as EnhancementMode)}>
               <option value="priority-pieces">Priority pieces first (recommended)</option>
               <option value="hero-order">Hero #1 first</option>
             </select>
@@ -413,45 +463,28 @@ export default function OptimizePage() {
         />
       )}
 
-      {rosterScanOpen && <RosterScanReview onConfirm={applyRosterScan} onClose={() => setRosterScanOpen(false)} />}
-
-      {scanTarget && (
-        <ScreenshotImport
-          key={scanTarget}
-          target={scanTarget}
-          alternativeTargets={
-            scanTarget === "hero_exp_total" ? ["hero_exp_items"] : scanTarget === "hero_exp_items" ? ["hero_exp_total"] : []
-          }
-          onConfirm={(values, t) => applyScan(t, values)}
-          onClose={() => setScanTarget(null)}
-        />
-      )}
     </div>
   );
 }
 
-function SectionHeader({ title, onScan, label = "Scan screenshot" }: { title: string; onScan: () => void; label?: string }) {
+function SectionHeader({ title, children }: { title: string; children?: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between mb-2">
+    <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
       <h2 className="font-semibold">{title}</h2>
-      <button onClick={onScan} className="text-xs text-blue-300 border border-blue-900 rounded-lg px-3 py-1.5">
-        {label}
-      </button>
+      {children && <div className="flex items-center gap-2 flex-wrap justify-end">{children}</div>}
     </div>
   );
 }
 
-function InventoryField({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+function InventoryField({ label, value, onChange, action }: { label: string; value: number; onChange: (v: number) => void; action?: React.ReactNode }) {
+  const id = useId();
   return (
-    <label className="flex flex-col gap-1 text-xs text-slate-400">
-      {label}
-      <input
-        type="number"
-        min={0}
-        className="field"
-        value={value}
-        onChange={(e) => onChange(Math.max(0, Number(e.target.value)))}
-      />
-    </label>
+    <div className="flex flex-col gap-1 text-xs text-slate-400">
+      <div className="flex items-center justify-between gap-1 min-h-[26px]">
+        <label htmlFor={id}>{label}</label>
+        {action}
+      </div>
+      <NumericInput id={id} className="field" min={0} value={value} onCommit={onChange} />
+    </div>
   );
 }

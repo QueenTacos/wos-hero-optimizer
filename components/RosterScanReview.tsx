@@ -9,6 +9,7 @@
 // Correct, changed, or skipped before anything reaches the hero list.
 // ============================================================================
 
+import { NumericInput } from "@/components/NumericInput";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { HeroPortrait } from "@/components/HeroPortrait";
 import { HeroPickerSheet, genLabel } from "@/components/HeroSelect";
@@ -258,7 +259,7 @@ export function RosterScanReview({
             disabled={!!busy}
             className={`py-3 rounded-xl text-sm ${entries.length ? "flex-1 border border-slate-700" : "flex-1 bg-blue-600 font-semibold"}`}
           >
-            {entries.length ? "Add screenshot" : "Choose roster screenshot"}
+            {entries.length ? "Add screenshots" : "Choose roster screenshots"}
           </button>
           {entries.length > 0 && (
             <button
@@ -280,11 +281,14 @@ export function RosterScanReview({
         ref={fileRef}
         type="file"
         accept="image/*"
+        multiple
         className="hidden"
-        onChange={(ev) => {
-          const f = ev.target.files?.[0];
-          if (f) addScreenshot(f);
+        data-testid="roster-input"
+        onChange={async (ev) => {
+          // Several screenshots can be picked at once; they're read one after another.
+          const files = Array.from(ev.target.files ?? []);
           ev.target.value = "";
+          for (const f of files) await addScreenshot(f);
         }}
       />
 
@@ -451,17 +455,14 @@ function ReviewCard({
           <div className="grid grid-cols-3 gap-1.5">
             <label className="flex flex-col text-[10px] text-slate-400 gap-0.5">
               Level
-              <input
-                type="number"
-                inputMode="numeric"
+              <NumericInput
                 min={1}
                 max={HERO_MAX_LEVEL}
                 placeholder="?"
                 className={`field !py-1 ${levelMissing ? "!border-amber-500" : ""}`}
-                value={decision.level ?? ""}
-                onChange={(ev) =>
-                  onDecide({ level: ev.target.value === "" ? null : Math.max(1, Math.min(HERO_MAX_LEVEL, Math.round(Number(ev.target.value) || 1))) })
-                }
+                value={decision.level}
+                onCommit={(level) => onDecide({ level })}
+                onClear={() => onDecide({ level: null })}
               />
             </label>
             <label className="flex flex-col text-[10px] text-slate-400 gap-0.5">

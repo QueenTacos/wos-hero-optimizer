@@ -51,7 +51,7 @@ export class TesseractOcrEngine implements OcrEngine {
     const { canvas, scale } = await preprocessImage(image, options.preprocess ?? "bright-text");
 
     await worker.setParameters({
-      tessedit_pageseg_mode: (options.singleLine ? PSM_SINGLE_LINE : options.numericOnly === false ? PSM_AUTO : PSM_SPARSE_TEXT) as never,
+      tessedit_pageseg_mode: (options.singleLine ? PSM_SINGLE_LINE : options.numericOnly === false && !options.sparse ? PSM_AUTO : PSM_SPARSE_TEXT) as never,
       tessedit_char_whitelist: options.whitelist ?? (options.numericOnly === false ? "" : NUMERIC_WHITELIST),
     });
 

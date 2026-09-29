@@ -14,6 +14,8 @@ import { createResourceInventoryParser, ResourceParseData } from "@/screenshotPa
 import { SCREENSHOT_TARGETS, ScreenshotTarget } from "@/lib/screenshot/targets";
 import { QuantityToken, confidenceLevel } from "@/lib/screenshot/quantityTokens";
 import { ScreenshotParseResult } from "@/lib/types";
+import { confidenceBand } from "@/lib/screenshot/scanTypes";
+import { ScreenshotPicker } from "@/components/ScreenshotPicker";
 
 type Step = "upload" | "scanning" | "review" | "error";
 
@@ -39,6 +41,8 @@ export function ScreenshotImport({
   const [target, setTarget] = useState<ScreenshotTarget>(initialTarget);
   const def = SCREENSHOT_TARGETS[target];
   const [reasons, setReasons] = useState<Record<string, string>>({});
+  /** Low-confidence detections: shown as "Detected: X · Use X", never pre-filled. */
+  const [held, setHeld] = useState<Record<string, { value: number; tokenId: string | null; confidence: number }>>({});
   const [step, setStep] = useState<Step>("upload");
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageSize, setImageSize] = useState<{ w: number; h: number } | null>(null);
@@ -86,14 +90,18 @@ export function ScreenshotImport({
 
       const initial: Record<string, FieldState> = {};
       setReasons(Object.fromEntries(res.data.suggestions.map((s) => [s.fieldKey, s.reason])));
+      const hold: typeof held = {};
       for (const s of res.data.suggestions) {
+        const low = s.value !== null && confidenceBand(s.confidence) === "low";
+        if (low) hold[s.fieldKey] = { value: s.value!, tokenId: s.tokenId, confidence: s.confidence };
         initial[s.fieldKey] = {
-          value: s.value === null ? "" : String(s.value),
-          tokenId: s.tokenId,
-          confidence: s.confidence,
+          value: s.value === null || low ? "" : String(s.value),
+          tokenId: low ? null : s.tokenId,
+          confidence: low ? 0 : s.confidence,
           userVerified: false,
         };
       }
+      setHeld(hold);
       setFields(initial);
       setActiveField(def.fields[0].key);
       setStep("review");
@@ -138,7 +146,7 @@ export function ScreenshotImport({
   const assignedTokenIds = new Set(Object.values(fields).map((f) => f.tokenId).filter(Boolean) as string[]);
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950 overflow-y-auto overscroll-contain" role="dialog" aria-modal="true" aria-label={`Scan ${def.title}`}>
+    <div className="fixed inset-0 z-50 bg-slate-950 overflow-y-auto overflow-x-hidden overscroll-contain" role="dialog" aria-modal="true" aria-label={`Scan ${def.title}`}>
       <div className="max-w-xl mx-auto px-4 py-4 pb-28 flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <h2 className="font-semibold text-lg">Scan: {def.title}</h2>
@@ -170,7 +178,7 @@ export function ScreenshotImport({
               <li>Your screenshot is read on this device and never uploaded anywhere.</li>
               <li>You'll check every value before anything is used.</li>
             </ul>
-            <FilePicker fileRef={fileRef} onFile={handleFile} label="Choose screenshot" />
+            <ScreenshotPicker onFiles={(f) => handleFile(f[0])} />
           </div>
         )}
 
@@ -187,7 +195,7 @@ export function ScreenshotImport({
         {step === "error" && (
           <div className="card flex flex-col gap-3 border border-red-900">
             <p className="text-sm text-red-300">{errorMsg}</p>
-            <FilePicker fileRef={fileRef} onFile={handleFile} label="Try another screenshot" />
+            <ScreenshotPicker onFiles={(f) => handleFile(f[0])} label="Try another screenshot" />
           </div>
         )}
 
@@ -198,7 +206,7 @@ export function ScreenshotImport({
                 Tap a field below, then tap its number on the screenshot. Numbers found:{" "}
                 <span className="text-slate-200">{result.data.tokens.length}</span>
               </div>
-              <div className="relative w-full select-none">
+              <div className="relative w-full select-none overflow-hidden rounded-lg">
                 <img src={imageUrl} alt="Your screenshot with detected numbers outlined" className="w-full rounded-lg block" />
                 {result.data.tokens.map((t) => {
                   const used = assignedTokenIds.has(t.id);
@@ -257,6 +265,24 @@ export function ScreenshotImport({
                       onFocus={() => setActiveField(f.key)}
                       onChange={(e) => editField(f.key, e.target.value)}
                     />
+                    {held[f.key] && (st?.value ?? "") === "" && (
+                      <div className="mt-1.5 flex items-center justify-between gap-2 rounded bg-red-500/10 border border-red-900/60 px-2 py-1.5">
+                        <span className="text-[11px] text-red-200">
+                          Low confidence: detected {held[f.key].value.toLocaleString()} ({Math.round(held[f.key].confidence * 100)}%)
+                        </span>
+                        <button
+                          type="button"
+                          className="text-xs px-2 py-1 rounded bg-slate-800 border border-slate-600"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const h = held[f.key];
+                            setFields((prev) => ({ ...prev, [f.key]: { value: String(h.value), tokenId: h.tokenId, confidence: h.confidence, userVerified: true } }));
+                          }}
+                        >
+                          Use {held[f.key].value.toLocaleString()}
+                        </button>
+                      </div>
+                    )}
                     {st && !st.userVerified && reasons[f.key] ? (
                       <div className="text-[11px] text-slate-500 mt-1">{reasons[f.key]}</div>
                     ) : st?.tokenId && tokensById.get(st.tokenId) ? (
@@ -268,6 +294,7 @@ export function ScreenshotImport({
             </div>
 
             <ResourceBreakdown target={target} fields={fields} />
+            <ApplyNote target={target} />
 
             {result.warnings.length > 0 && (
               <div className="card border border-amber-900">
@@ -314,35 +341,6 @@ export function ScreenshotImport({
   );
 }
 
-function FilePicker({
-  fileRef,
-  onFile,
-  label,
-}: {
-  fileRef: React.RefObject<HTMLInputElement>;
-  onFile: (f: File) => void;
-  label: string;
-}) {
-  return (
-    <>
-      <button onClick={() => fileRef.current?.click()} className="bg-blue-600 rounded-xl py-3 font-semibold">
-        {label}
-      </button>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) onFile(f);
-          e.target.value = "";
-        }}
-      />
-    </>
-  );
-}
-
 function ConfidenceBadge({ state }: { state?: FieldState }) {
   if (!state || state.value === "") return <span className="text-[11px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-300">Missing</span>;
   if (state.userVerified) return <span className="text-[11px] px-2 py-0.5 rounded-full bg-green-500/20 text-green-300">Set by you</span>;
@@ -376,10 +374,11 @@ function ResourceBreakdown({ target, fields }: { target: ScreenshotTarget; field
     ];
     totalLabel = "Total Hero EXP";
   } else {
-    const t = n("total");
+    const key = target === "hero_exp_total" ? "total" : "qty";
+    const t = n(key);
     return (
       <div className="card flex items-center justify-between" aria-live="polite">
-        <span className="text-sm text-slate-300">Hero EXP</span>
+        <span className="text-sm text-slate-300">{target === "hero_exp_total" ? "Hero EXP" : SCREENSHOT_TARGETS[target].title}</span>
         <span className="text-lg font-semibold tabular-nums">{t === null ? "—" : fmt(t)}</span>
       </div>
     );
@@ -401,4 +400,16 @@ function ResourceBreakdown({ target, fields }: { target: ScreenshotTarget; field
       </div>
     </div>
   );
+}
+
+/** Says exactly what "Confirm" will change, so Total and Items Hero EXP are never added together. */
+function ApplyNote({ target }: { target: ScreenshotTarget }) {
+  const text: Record<ScreenshotTarget, string> = {
+    hero_exp_total: "Confirming switches Hero EXP to Total mode with this number. Your EXP item counts are kept but not used — the two are never added together.",
+    hero_exp_items: "Confirming switches Hero EXP to EXP Items mode with these counts. A Total you typed is kept but not used — the two are never added together.",
+    enhancement_components: "Confirming replaces your 10 XP and 100 XP component counts. Sacrificed gear XP is not changed.",
+    essence_stones: "Confirming replaces your Essence Stones amount.",
+    mithril: "Confirming replaces your Mithril amount.",
+  };
+  return <p className="text-xs text-slate-400 px-1">{text[target]}</p>;
 }

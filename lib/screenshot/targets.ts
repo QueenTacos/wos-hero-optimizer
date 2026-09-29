@@ -5,7 +5,7 @@
 
 import { Inventory } from "../types";
 
-export type ScreenshotTarget = "hero_exp_items" | "hero_exp_total" | "enhancement_components";
+export type ScreenshotTarget = "hero_exp_items" | "hero_exp_total" | "enhancement_components" | "essence_stones" | "mithril";
 
 export interface ReviewField {
   key: string;
@@ -50,6 +50,20 @@ export const SCREENSHOT_TARGETS: Record<ScreenshotTarget, TargetDefinition> = {
       { key: "xp10", label: "10 XP components" },
       { key: "xp100", label: "100 XP components" },
     ],
+  },
+  essence_stones: {
+    target: "essence_stones",
+    title: "Essence Stones",
+    instructions:
+      "Screenshot a screen that shows the words “Essence Stone” next to your amount — e.g. tap the Essence Stone in your Backpack so its name and “Owned” amount show. From a plain Backpack grid (no names), tap the Essence Stone number on the screenshot yourself.",
+    fields: [{ key: "qty", label: "Essence Stones" }],
+  },
+  mithril: {
+    target: "mithril",
+    title: "Mithril",
+    instructions:
+      "Screenshot a screen that shows the word “Mithril” next to your amount — e.g. tap Mithril in your Backpack so its name and “Owned” amount show. From a plain Backpack grid (no names), tap the Mithril number on the screenshot yourself.",
+    fields: [{ key: "qty", label: "Mithril" }],
   },
 };
 
@@ -97,5 +111,9 @@ export function applyConfirmedValues(
         enhancementComponents: { xp10: v("xp10", c.xp10), xp100: v("xp100", c.xp100) },
       };
     }
+    case "essence_stones":
+      return { ...inventory, essenceStones: v("qty", inventory.essenceStones) };
+    case "mithril":
+      return { ...inventory, mithril: v("qty", inventory.mithril) };
   }
 }

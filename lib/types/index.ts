@@ -342,6 +342,8 @@ export interface ScreenshotParseResult<T> {
     | "hero_roster"
     | "hero_exp_inventory"
     | "enhancement_components"
+    | "resource_inventory"
+    | "gear_inventory"
     | "hero_gear"
     | "opponent"
     | "bear_trap";

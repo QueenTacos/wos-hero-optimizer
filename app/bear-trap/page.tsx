@@ -1,5 +1,6 @@
 "use client";
 
+import { NumericInput } from "@/components/NumericInput";
 import { useMemo, useState } from "react";
 import { HeroSelect } from "@/components/HeroSelect";
 import { TroopBadge } from "@/components/TroopBadge";
@@ -83,23 +84,23 @@ export default function BearTrapPage() {
                 <TroopBadge troopType={getHeroDefinition(row.heroDefId)!.troopType} />
                 <label className="flex items-center gap-1">
                   Lv
-                  <input
-                    type="number"
+                  <NumericInput
+                    min={1}
+                    max={80}
                     className="w-16 bg-slate-800 rounded px-2 py-1"
                     value={row.level}
-                    onChange={(e) => updateRow(row.rowId, { level: Number(e.target.value) })}
+                    onCommit={(level) => updateRow(row.rowId, { level })}
                   />
                 </label>
                 <label className="flex items-center gap-1">
                   ★
-                  <input
-                    type="number"
-                    step="0.5"
-                    min="0"
-                    max="5"
+                  <NumericInput
+                    allowDecimal
+                    min={0}
+                    max={5}
                     className="w-14 bg-slate-800 rounded px-2 py-1"
                     value={row.stars}
-                    onChange={(e) => updateRow(row.rowId, { stars: Number(e.target.value) })}
+                    onCommit={(stars) => updateRow(row.rowId, { stars })}
                   />
                 </label>
               </div>

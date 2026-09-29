@@ -21,6 +21,8 @@ export interface RecognizeWordsOptions {
   whitelist?: string;
   /** Treat the image as a single line of text (e.g. one "Lv. 12" label). */
   singleLine?: boolean;
+  /** Find scattered text anywhere (e.g. numbers on gear tiles) even when numericOnly is false. */
+  sparse?: boolean;
   /** 0-1 progress callback. */
   onProgress?: (p: number) => void;
 }

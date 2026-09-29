@@ -6,6 +6,7 @@
 import { HeroSelect, genLabel } from "@/components/HeroSelect";
 import { TroopBadge } from "@/components/TroopBadge";
 import { GearEditor, RowGear } from "@/components/GearEditor";
+import { NumericInput } from "@/components/NumericInput";
 import { getHeroDefinition } from "@/lib/data/heroDatabase";
 import { HERO_MAX_LEVEL } from "@/lib/data/heroXpTable";
 import { TIERS_PER_STAR, fromStarValue, toStarValue } from "@/lib/data/shardTable";
@@ -25,6 +26,7 @@ export function HeroCard({
   takenIds,
   onChange,
   onRemove,
+  gearScan,
 }: {
   row: RosterRow;
   /** 1-based position in the list; shown when Manual Top 5 is on. */
@@ -32,6 +34,8 @@ export function HeroCard({
   takenIds: string[];
   onChange: (rowId: string, patch: Partial<RosterRow>) => void;
   onRemove: (rowId: string) => void;
+  /** "Scan gear" button shown in the Hero Gear header. */
+  gearScan?: React.ReactNode;
 }) {
   const def = row.heroDefId ? getHeroDefinition(row.heroDefId) : undefined;
   const { stars, tier } = fromStarValue(row.stars);
@@ -66,14 +70,13 @@ export function HeroCard({
           <div className="grid grid-cols-3 gap-2 text-sm">
             <label className="flex flex-col gap-1 text-xs text-slate-400">
               Level
-              <input
-                type="number"
-                inputMode="numeric"
+              <NumericInput
+                className="field"
+                aria-label="Level"
                 min={1}
                 max={HERO_MAX_LEVEL}
-                className="field"
                 value={row.level}
-                onChange={(e) => onChange(row.rowId, { level: clampInt(e.target.value, 1, HERO_MAX_LEVEL) })}
+                onCommit={(level) => onChange(row.rowId, { level })}
               />
             </label>
             <label className="flex flex-col gap-1 text-xs text-slate-400">
@@ -107,15 +110,9 @@ export function HeroCard({
             </label>
           </div>
 
-          <GearEditor gear={row.gear} onChange={(gear) => onChange(row.rowId, { gear })} />
+          <GearEditor gear={row.gear} onChange={(gear) => onChange(row.rowId, { gear })} headerAction={gearScan} />
         </>
       )}
     </div>
   );
-}
-
-function clampInt(raw: string, min: number, max: number) {
-  const n = Math.round(Number(raw));
-  if (!Number.isFinite(n)) return min;
-  return Math.max(min, Math.min(max, n));
 }

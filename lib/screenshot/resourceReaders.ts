@@ -249,3 +249,117 @@ export function enhancementXpFrom(xp10Qty: number | null, xp100Qty: number | nul
   const b = (xp100Qty ?? 0) * 100;
   return { fromXp10: a, fromXp100: b, total: a + b };
 }
+
+// ---------------------------------------------------------------------------
+// Label-anchored quantities: Essence Stones, Mithril
+//
+// No icon templates exist for these yet, so the reader anchors on the item's
+// NAME and never guesses from an unlabeled backpack tile:
+//   • list row   — "Essence Stone ........ 1,250"  → right-most number on the row
+//   • item popup — "Mithril" … "Owned: 27"          → number after an "Owned" /
+//                  "Quantity" / "Have" word below the name
+// Confidence stays below "high" (no icon check), so the user always reviews it.
+// If no label is found the user taps the number on the screenshot instead.
+// ---------------------------------------------------------------------------
+
+export interface LabeledQuantitySpec {
+  /** Accepted label spellings as word sequences, lowercase letters only. */
+  labels: string[][];
+  /** A row that also contains one of these words is a different item (e.g. "Mithril Ore Chest"). */
+  excludeWords?: string[];
+  name: string;
+}
+
+export const ESSENCE_STONE_LABEL: LabeledQuantitySpec = {
+  name: "Essence Stone",
+  labels: [["essence", "stone"], ["essence", "stones"], ["essencestone"], ["essencestones"]],
+  excludeWords: ["chest", "shard", "shards", "fragment"],
+};
+
+export const MITHRIL_LABEL: LabeledQuantitySpec = {
+  name: "Mithril",
+  labels: [["mithril"]],
+  excludeWords: ["chest", "ore", "component", "components", "shard", "shards"],
+};
+
+export interface LabeledQuantityReading {
+  value: number | null;
+  rawText: string;
+  confidence: number;
+  labelFound: boolean;
+  valueBox?: BBox;
+  labelBox?: BBox;
+  notes: string[];
+}
+
+const letters = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
+
+/** Edit distance ≤ 1 for words of 5+ letters (OCR slips like "Mithrll"); exact otherwise. */
+function wordMatches(ocr: string, want: string) {
+  if (ocr === want) return true;
+  if (want.length < 5 || Math.abs(ocr.length - want.length) > 1) return false;
+  let i = 0, j = 0, edits = 0;
+  while (i < ocr.length && j < want.length) {
+    if (ocr[i] === want[j]) { i++; j++; continue; }
+    if (++edits > 1) return false;
+    if (ocr.length > want.length) i++;
+    else if (ocr.length < want.length) j++;
+    else { i++; j++; }
+  }
+  return edits + (ocr.length - i) + (want.length - j) <= 1;
+}
+
+export function findLabel(words: OcrWord[], spec: LabeledQuantitySpec): BBox | null {
+  for (let i = 0; i < words.length; i++) {
+    for (const seq of spec.labels) {
+      if (!wordMatches(letters(words[i].text), seq[0])) continue;
+      let box = words[i].bbox;
+      let ok = true;
+      let prev = words[i];
+      for (let k = 1; k < seq.length; k++) {
+        const nxt = words.find((w) => w.bbox.x > prev.bbox.x && sameRow(w.bbox, prev.bbox) && wordMatches(letters(w.text), seq[k]));
+        if (!nxt) { ok = false; break; }
+        box = { x: box.x, y: Math.min(box.y, nxt.bbox.y), width: nxt.bbox.x + nxt.bbox.width - box.x, height: Math.max(box.height, nxt.bbox.height) };
+        prev = nxt;
+      }
+      if (!ok) continue;
+      const excluded = spec.excludeWords?.length
+        ? words.some((w) => sameRow(w.bbox, box) && spec.excludeWords!.includes(letters(w.text)))
+        : false;
+      if (!excluded) return box;
+    }
+  }
+  return null;
+}
+
+export function readLabeledQuantity(words: OcrWord[], spec: LabeledQuantitySpec): LabeledQuantityReading {
+  const label = findLabel(words, spec);
+  if (!label) {
+    return { value: null, rawText: "", confidence: 0, labelFound: false, notes: [`Couldn't find the “${spec.name}” name on this screenshot — tap its quantity on the image instead.`] };
+  }
+  const notes: string[] = [];
+  // 1. Same row, to the right of the name (resource list layout).
+  const onRow = words
+    .filter((w) => sameRow(w.bbox, label) && w.bbox.x > label.x + label.width && parseGameNumber(w.text) !== null)
+    .sort((a, b) => b.bbox.x - a.bbox.x);
+  if (onRow.length) {
+    const hit = onRow[0];
+    if (onRow.length > 1) notes.push(`Several numbers on the ${spec.name} row; used the right-most (“${hit.text}”).`);
+    return { value: parseGameNumber(hit.text), rawText: hit.text, confidence: 0.8, labelFound: true, valueBox: hit.bbox, labelBox: label, notes };
+  }
+  // 2. Item popup: a number after "Owned" / "Quantity" / "Have" / "Amount" below the name.
+  const maxDy = label.height * 8;
+  const ownWords = words.filter((w) => /^(owned|own|quantity|qty|have|amount|x)$/.test(letters(w.text)) && w.bbox.y >= label.y && w.bbox.y - label.y <= maxDy);
+  for (const ow of ownWords) {
+    // "Owned: 27" can also OCR as one word "Owned:27".
+    const inline = ow.text.match(/(\d[\d,.]*[kKmM]?)\s*$/);
+    if (inline && parseGameNumber(inline[1]) !== null) {
+      return { value: parseGameNumber(inline[1]), rawText: inline[1], confidence: 0.7, labelFound: true, valueBox: ow.bbox, labelBox: label, notes };
+    }
+    const next = words
+      .filter((w) => sameRow(w.bbox, ow.bbox) && w.bbox.x > ow.bbox.x && parseGameNumber(w.text) !== null)
+      .sort((a, b) => a.bbox.x - b.bbox.x)[0];
+    if (next) return { value: parseGameNumber(next.text), rawText: next.text, confidence: 0.7, labelFound: true, valueBox: next.bbox, labelBox: label, notes };
+  }
+  return { value: null, rawText: "", confidence: 0.2, labelFound: true, labelBox: label, notes: [`Found “${spec.name}” but no quantity next to it — tap the number on the image.`] };
+}

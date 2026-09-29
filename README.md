@@ -11,6 +11,19 @@ scanning for resource counts** (Hero EXP items, Total EXP, Enhancement
 Components) with a mandatory Review/Confirm step. Portrait recognition and
 hero-gear screenshot parsing are still Phase 3 (see "Future Work" below).
 
+> **Screenshot expansion + number input fix (latest):** Every data-entry step
+> has a contextual scan button built on one `<ScanButton scanType=…>` component
+> (`hero-roster`, `hero-gear`, `hero-exp`, `enhancement-components`,
+> `essence-stones`, `mithril`, `mythic-gear`, `extra-gear`), a shared
+> scan model (`lib/screenshot/scanTypes.ts`: confidence per field; low
+> confidence is never pre-filled) and a review step before anything is applied.
+> Manual entry always works. Numeric fields use `<NumericInput>`: text is kept
+> as typed and only parsed/clamped on blur or Enter (fixes the Hero Level
+> field that could only be 1 or 80 on phones). Hero Gear, Essence Stone,
+> Mithril and gear-inventory scanning are NEW and have only been tested on
+> synthetic screenshots plus the real empty-gear and backpack screenshots —
+> see `__tests__/screenshotExpansion.test.ts`.
+
 > **Package integration update (portraits + roster recognition):** The app now
 > uses the hero portrait folder from `WOS_Hero_Optimizer_Full_Project_Package`
 > as its local hero image library (`public/assets/heroes/portraits`, original

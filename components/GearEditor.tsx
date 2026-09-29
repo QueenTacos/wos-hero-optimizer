@@ -10,6 +10,7 @@ import { GearRarity, GearSlot, GEAR_SLOTS } from "@/lib/types";
 import { GEAR_RARITY_LABELS, GEAR_RARITY_ORDER } from "@/lib/data/gearRarity";
 import { GEAR_MAX_LEVEL } from "@/lib/data/gearXpTable";
 import { MASTERY_MAX } from "@/lib/data/masteryForgingTable";
+import { NumericInput } from "@/components/NumericInput";
 import type { SavedGearPiece } from "@/lib/storage/savedState";
 
 export type RowGearPiece = SavedGearPiece;
@@ -21,16 +22,18 @@ export function emptyRowGear(): RowGear {
   return { goggles: null, gloves: null, belt: null, boots: null };
 }
 
-const clamp = (v: string, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(Number(v) || 0)));
 
-export function GearEditor({ gear, onChange }: { gear: RowGear; onChange: (g: RowGear) => void }) {
+export function GearEditor({ gear, onChange, headerAction }: { gear: RowGear; onChange: (g: RowGear) => void; headerAction?: React.ReactNode }) {
   function setSlot(slot: GearSlot, piece: RowGearPiece | null) {
     onChange({ ...gear, [slot]: piece });
   }
 
   return (
     <div>
-      <div className="text-xs font-semibold text-slate-300 mb-1.5">Hero Gear</div>
+      <div className="flex items-center justify-between mb-1.5 min-h-[26px]">
+        <span className="text-xs font-semibold text-slate-300">Hero Gear</span>
+        {headerAction}
+      </div>
       <div className="grid grid-cols-1 min-[440px]:grid-cols-2 gap-2">
         {GEAR_SLOTS.map((slot) => {
           const p = gear[slot];
@@ -82,33 +85,26 @@ export function GearEditor({ gear, onChange }: { gear: RowGear; onChange: (g: Ro
               <div className={`grid grid-cols-3 gap-1 ${p ? "" : "opacity-40"}`}>
                 <label className="flex flex-col text-[10px] text-slate-400 gap-0.5" title={legendary ? "Legendary enhancement (its own +0…+100 scale)" : "Enhancement (+0…+100)"}>
                   Enh. +
-                  <input
-                    type="number"
-                    inputMode="numeric"
+                  <NumericInput
                     min={0}
                     max={GEAR_MAX_LEVEL}
                     disabled={!p}
                     aria-label={`${SLOT_LABELS[slot]} enhancement`}
                     className="field !px-1.5 !py-1 text-right"
                     value={p?.enhancementLevel ?? 0}
-                    onChange={(e) => upd({ enhancementLevel: clamp(e.target.value, 0, GEAR_MAX_LEVEL) })}
+                    onCommit={(enhancementLevel) => upd({ enhancementLevel })}
                   />
                 </label>
                 <label className="flex flex-col text-[10px] text-slate-400 gap-0.5" title="Mastery Forging level (Essence Stones)">
                   Mastery
-                  <input
-                    type="number"
-                    inputMode="numeric"
+                  <NumericInput
                     min={0}
                     max={MASTERY_MAX.level}
                     disabled={!p}
                     aria-label={`${SLOT_LABELS[slot]} mastery level`}
                     className="field !px-1.5 !py-1 text-right"
                     value={p?.masteryLevel ?? 0}
-                    onChange={(e) => {
-                      const lv = clamp(e.target.value, 0, MASTERY_MAX.level);
-                      upd({ masteryLevel: lv, masteryStage: lv >= 4 && lv < MASTERY_MAX.level ? p?.masteryStage ?? 0 : 0 });
-                    }}
+                    onCommit={(lv) => upd({ masteryLevel: lv, masteryStage: lv >= 4 && lv < MASTERY_MAX.level ? p?.masteryStage ?? 0 : 0 })}
                   />
                 </label>
                 <label className="flex flex-col text-[10px] text-slate-400 gap-0.5" title="Mastery stage (0-4, from Mastery Lv.4)">
